@@ -1,0 +1,60 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Universal)
+            os: macos-14
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+            targets: ShaperVST_VST3 ShaperVST_AU ShaperTests ShaperHostTest
+          - name: Windows
+            os: windows-latest
+            cmake_args: ""
+            targets: ShaperVST_VST3 ShaperTests ShaperHostTest
+          - name: Linux
+            os: ubuntu-24.04
+            cmake_args: ""
+            targets: ShaperVST_VST3 ShaperTests ShaperHostTest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxext-dev libxcomposite-dev libfreetype-dev libfontconfig1-dev libgl1-mesa-dev xvfb
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4 --target ${{ matrix.targets }}
+
+      - name: Test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a ctest --test-dir build -C Release --output-on-failure
+
+      - name: Test
+        if: runner.os != 'Linux'
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Upload plugins
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShaperVST-${{ runner.os }}
+          path: |
+            build/ShaperVST_artefacts/Release/VST3
+            build/ShaperVST_artefacts/Release/AU
+          if-no-files-found: error
