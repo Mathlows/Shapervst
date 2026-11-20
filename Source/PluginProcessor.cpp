@@ -17,7 +17,7 @@ ShaperProcessor::ShaperProcessor()
     pRateHz    = apvts.getRawParameterValue (ParamIDs::rateHz);
     pPhase     = apvts.getRawParameterValue (ParamIDs::phase);
     pSmooth    = apvts.getRawParameterValue (ParamIDs::smooth);
-    pMultiband = apvts.getRawParameterValue (ParamIDs::multiband);
+    pBands     = apvts.getRawParameterValue (ParamIDs::bands);
     pXoverLow  = apvts.getRawParameterValue (ParamIDs::xoverLow);
     pXoverHigh = apvts.getRawParameterValue (ParamIDs::xoverHigh);
     pMix       = apvts.getRawParameterValue (ParamIDs::mix);
@@ -74,18 +74,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout ShaperProcessor::createLayou
                                                        NormalisableRange<float> (0.0f, 50.0f, 0.0f, 0.5f), 2.0f,
                                                        AudioParameterFloatAttributes().withStringFromValueFunction (
                                                            [] (float v, int) { return String (v, 1) + " ms"; })));
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::multiband, 1 }, "Multiband", false));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::bands, 1 }, "Bands",
+                                                        StringArray { "1 band", "2 bands", "3 bands" }, 0));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::xoverLow, 1 }, "Crossover Low",
                                                        NormalisableRange<float> (20.0f, 2000.0f, 0.0f, 0.3f), 200.0f, hz));
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::xoverHigh, 1 }, "Crossover High",
                                                        NormalisableRange<float> (300.0f, 16000.0f, 0.0f, 0.3f), 2500.0f, hz));
 
-    const char* bandNames[] = { "Low", "Mid", "High" };
     for (int b = 0; b < numBands; ++b)
     {
-        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::depth (b), 1 }, String (bandNames[b]) + " Depth",
+        const auto prefix = "Band " + String (b + 1);
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::depth (b), 1 }, prefix + " Depth",
                                                            NormalisableRange<float> (0.0f, 1.0f), 1.0f, percent));
-        layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::bandOn (b), 1 }, String (bandNames[b]) + " On", true));
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { ParamIDs::bandOn (b), 1 }, prefix + " On", true));
     }
 
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { ParamIDs::mix, 1 }, "Mix",
@@ -133,6 +134,58 @@ void ShaperProcessor::prepareToPlay (double sampleRate, int)
 
     for (int b = 0; b < numBands; ++b)
         smoothedGain[(size_t) b] = lookup (b, phaseEngine.readPosition (pPhase->load()));
+}
+
+//==============================================================================
+int ShaperProcessor::getActiveBandCount() const noexcept
+{
+    return juce::jlimit (1, numBands, juce::roundToInt (pBands->load()) + 1);
+}
+
+juce::String ShaperProcessor::bandName (int band, int bandCount)
+{
+    if (bandCount <= 1)
+        return "Full";
+
+    if (bandCount == 2)
+        return band == 0 ? "Low" : "High";
+
+    const char* names[] = { "Low", "Mid", "High" };
+    return names[juce::jlimit (0, 2, band)];
+}
+
+static void setParameterValue (juce::AudioProcessorValueTreeState& state, const juce::String& id, float plainValue)
+{
+    auto* param = state.getParameter (id);
+    param->beginChangeGesture();
+    param->setValueNotifyingHost (param->convertTo0to1 (plainValue));
+    param->endChangeGesture();
+}
+
+void ShaperProcessor::addBand()
+{
+    const int count = getActiveBandCount();
+    if (count >= numBands)
+        return;
+
+    // The new top band starts as a copy of the current top band: adding a band never changes the shape of the sound.
+    const int source = count - 1;
+    setCurve (count, getCurve (source));
+    setParameterValue (apvts, ParamIDs::depth (count), pDepth[(size_t) source]->load());
+    setParameterValue (apvts, ParamIDs::bandOn (count), pBandOn[(size_t) source]->load());
+
+    // Keep the crossovers ordered and audible when going from 2 to 3 bands.
+    if (count == 2 && pXoverHigh->load() < pXoverLow->load() * 2.0f)
+        setParameterValue (apvts, ParamIDs::xoverHigh, juce::jmin (16000.0f, pXoverLow->load() * 8.0f));
+
+    setParameterValue (apvts, ParamIDs::bands, (float) count); // choice index = count - 1 + 1
+}
+
+void ShaperProcessor::removeBand()
+{
+    const int count = getActiveBandCount();
+    if (count > 1)
+        setParameterValue (apvts, ParamIDs::bands, (float) (count - 2));
 }
 
 //==============================================================================
@@ -201,8 +254,7 @@ void ShaperProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     const int typeIndex = juce::jlimit (0, 2, juce::roundToInt (pRateType->load()));
     const double beatsPerCycle = syncDivisionBeats[rateIndex] * syncTypeFactors[typeIndex];
     const float phaseOffset = pPhase->load();
-    const bool multiband = pMultiband->load() > 0.5f;
-    const int activeBands = multiband ? numBands : 1;
+    const int activeBands = getActiveBandCount();
 
     std::array<float, numBands> depth {};
     for (int b = 0; b < numBands; ++b)
@@ -239,12 +291,12 @@ void ShaperProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         phaseEngine.syncToHost (*ppq / beatsPerCycle);
 
     // --- Crossover ------------------------------------------------------------
-    if (multiband && ! wasMultiband)
-        crossover.reset(); // avoid stale filter state when the split is switched on
+    if (activeBands != lastActiveBands)
+        crossover.reset(); // avoid stale filter state when the band layout changes
 
-    wasMultiband = multiband;
+    lastActiveBands = activeBands;
 
-    if (multiband)
+    if (activeBands > 1)
     {
         xoverLowSmoothed.setTargetValue (pXoverLow->load());
         xoverHighSmoothed.setTargetValue (pXoverHigh->load());
@@ -292,15 +344,23 @@ void ShaperProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
 
             float dry, wet;
 
-            if (multiband)
+            if (activeBands == 3)
             {
                 float low, mid, high;
                 crossover.process (ch, x, low, mid, high);
                 dry = low + mid + high; // phase-matched dry signal for the mix
                 wet = low * gain[0] + mid * gain[1] + high * gain[2];
             }
+            else if (activeBands == 2)
+            {
+                float low, high;
+                crossover.process2 (ch, x, low, high);
+                dry = low + high;
+                wet = low * gain[0] + high * gain[1];
+            }
             else
             {
+                // Single band: no filter at all, so no phase shift.
                 dry = x;
                 wet = x * gain[0];
             }
@@ -337,6 +397,7 @@ void ShaperProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.appendChild (curvesTree, nullptr);
     state.setProperty ("uiBand", uiSelectedBand.load(), nullptr);
     state.setProperty ("uiGrid", uiGridIndex.load(), nullptr);
+    state.setProperty ("uiShowOtherBands", uiShowOtherBands.load(), nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -361,6 +422,7 @@ void ShaperProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     uiSelectedBand = juce::jlimit (0, numBands - 1, (int) state.getProperty ("uiBand", 0));
     uiGridIndex = (int) state.getProperty ("uiGrid", uiGridIndex.load());
+    uiShowOtherBands = (bool) state.getProperty ("uiShowOtherBands", true);
 
     state.removeChild (curvesTree, nullptr);
     apvts.replaceState (state);

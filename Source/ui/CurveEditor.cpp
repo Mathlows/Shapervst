@@ -18,9 +18,11 @@ CurveEditor::CurveEditor (ShaperProcessor& p) : processor (p)
     startTimerHz (60);
 }
 
-void CurveEditor::setBand (int newBand)
+void CurveEditor::setBand (int newBand, int bandCount, juce::Colour colour)
 {
-    band = juce::jlimit (0, ShaperProcessor::numBands - 1, newBand);
+    activeBandCount = juce::jlimit (1, ShaperProcessor::numBands, bandCount);
+    band = juce::jlimit (0, activeBandCount - 1, newBand);
+    bandColour = colour;
     hover = drag = {};
     repaint();
 }
@@ -116,7 +118,7 @@ void CurveEditor::commit (const ShapeCurve& curve)
 void CurveEditor::paint (juce::Graphics& g)
 {
     const auto area = plotArea();
-    const auto colour = Theme::band (band);
+    const auto colour = bandColour;
     const auto curve = processor.getCurve (band);
     const auto& pts = curve.points();
 
@@ -156,21 +158,17 @@ void CurveEditor::paint (juce::Graphics& g)
     g.setColour (Theme::gridStrong);
     g.drawRect (area, 1.0f);
 
-    // Curve: sampled per pixel so tensions and jumps are exact.
-    juce::Path line;
-    const int columns = juce::jmax (2, (int) area.getWidth());
-
-    for (int c = 0; c <= columns; ++c)
+    // The other bands' curves, faintly, so the bands can be compared while editing one of them.
+    for (int b = 0; showOtherBands && b < activeBandCount; ++b)
     {
-        const float x = (float) c / (float) columns;
-        const auto p = toScreen (x, curve.evaluate (x));
-        c == 0 ? line.startNewSubPath (p) : line.lineTo (p);
+        if (b == band)
+            continue;
+
+        g.setColour (otherColours[(size_t) b].withAlpha (0.35f));
+        g.strokePath (curvePath (processor.getCurve (b)), juce::PathStrokeType (1.5f));
     }
 
-    // Vertical jumps: draw the exact edges.
-    for (int i = 0; i + 1 < (int) pts.size(); ++i)
-        if (pts[(size_t) i + 1].x - pts[(size_t) i].x < 1.0e-6f)
-            line.addLineSegment ({ toScreen (pts[(size_t) i].x, pts[(size_t) i].y), toScreen (pts[(size_t) i + 1].x, pts[(size_t) i + 1].y) }, 0.0f);
+    const auto line = curvePath (curve);
 
     juce::Path fill (line);
     fill.lineTo (area.getBottomRight());
@@ -230,6 +228,29 @@ void CurveEditor::paint (juce::Graphics& g)
         g.setFont (juce::FontOptions (12.0f));
         g.drawText (text, area.reduced (6.0f).removeFromTop (16.0f), juce::Justification::topRight);
     }
+}
+
+juce::Path CurveEditor::curvePath (const ShapeCurve& curve) const
+{
+    // Sampled per pixel so tensions and jumps are exact.
+    const auto area = plotArea();
+    const auto& pts = curve.points();
+    juce::Path line;
+    const int columns = juce::jmax (2, (int) area.getWidth());
+
+    for (int c = 0; c <= columns; ++c)
+    {
+        const float x = (float) c / (float) columns;
+        const auto p = toScreen (x, curve.evaluate (x));
+        c == 0 ? line.startNewSubPath (p) : line.lineTo (p);
+    }
+
+    // Vertical jumps: draw the exact edges.
+    for (int i = 0; i + 1 < (int) pts.size(); ++i)
+        if (pts[(size_t) i + 1].x - pts[(size_t) i].x < 1.0e-6f)
+            line.addLineSegment ({ toScreen (pts[(size_t) i].x, pts[(size_t) i].y), toScreen (pts[(size_t) i + 1].x, pts[(size_t) i + 1].y) }, 0.0f);
+
+    return line;
 }
 
 //==============================================================================
@@ -426,7 +447,7 @@ void CurveEditor::showContextMenu()
                             }
                             else if (result == 5)
                             {
-                                for (int b = 0; b < ShaperProcessor::numBands; ++b)
+                                for (int b = 0; b < self.activeBandCount; ++b)
                                     self.processor.setCurve (b, curve);
                                 self.repaint();
                                 return;

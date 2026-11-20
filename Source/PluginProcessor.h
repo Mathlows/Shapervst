@@ -19,7 +19,7 @@ namespace ParamIDs
     inline constexpr auto rateHz     = "rateHz";
     inline constexpr auto phase      = "phase";
     inline constexpr auto smooth     = "smooth";
-    inline constexpr auto multiband  = "multiband";
+    inline constexpr auto bands      = "bands";
     inline constexpr auto xoverLow   = "xoverLow";
     inline constexpr auto xoverHigh  = "xoverHigh";
     inline constexpr auto mix        = "mix";
@@ -37,6 +37,14 @@ public:
     static constexpr int scopeBins = 256;
 
     ShaperProcessor();
+
+    /** Number of bands currently in use (1 = no crossover, no phase shift). */
+    int getActiveBandCount() const noexcept;
+    /** Adds a band at the top of the spectrum, copying the current top band so the sound does not change. */
+    void addBand();
+    /** Removes the top band. */
+    void removeBand();
+    static juce::String bandName (int band, int bandCount);
     ~ShaperProcessor() override = default;
 
     //==============================================================================
@@ -76,6 +84,7 @@ public:
     std::array<std::atomic<float>, scopeBins> inputScope {};
     std::atomic<int> uiSelectedBand { 0 };
     std::atomic<int> uiGridIndex { 5 };
+    std::atomic<bool> uiShowOtherBands { true };
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -99,7 +108,7 @@ private:
     juce::SmoothedValue<float> outputGain { 1.0f }, mixAmount { 1.0f };
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> xoverLowSmoothed { 200.0f }, xoverHighSmoothed { 2500.0f };
     double currentSampleRate = 44100.0;
-    bool wasMultiband = false;
+    int lastActiveBands = 1;
     int scopeCurrentBin = 0;
     float scopeCurrentPeak = 0.0f;
 
@@ -111,7 +120,7 @@ private:
     std::atomic<float>* pRateHz = nullptr;
     std::atomic<float>* pPhase = nullptr;
     std::atomic<float>* pSmooth = nullptr;
-    std::atomic<float>* pMultiband = nullptr;
+    std::atomic<float>* pBands = nullptr;
     std::atomic<float>* pXoverLow = nullptr;
     std::atomic<float>* pXoverHigh = nullptr;
     std::atomic<float>* pMix = nullptr;

@@ -3,7 +3,6 @@
 namespace
 {
     constexpr int gridOptions[] = { 0, 2, 3, 4, 6, 8, 12, 16, 24, 32 };
-    const char* bandLabels[] = { "Low", "Mid", "High" };
 }
 
 ShaperEditor::ShaperEditor (ShaperProcessor& p)
@@ -19,13 +18,33 @@ ShaperEditor::ShaperEditor (ShaperProcessor& p)
     for (int b = 0; b < ShaperProcessor::numBands; ++b)
     {
         auto& button = bandButtons[(size_t) b];
-        button.setButtonText (bandLabels[b]);
         button.setClickingTogglesState (true);
         button.setRadioGroupId (1001);
-        button.setColour (juce::TextButton::buttonOnColourId, Theme::band (b));
         button.onClick = [this, b] { if (bandButtons[(size_t) b].getToggleState()) selectBand (b); };
         addAndMakeVisible (button);
     }
+
+    addBandButton.setTooltip ("Add a band (copies the top band, the sound does not change)");
+    removeBandButton.setTooltip ("Remove the top band");
+    addBandButton.onClick = [this]
+    {
+        processor.addBand();
+        timerCallback();
+        selectBand (processor.getActiveBandCount() - 1);
+    };
+    removeBandButton.onClick = [this] { processor.removeBand(); timerCallback(); };
+    addAndMakeVisible (addBandButton);
+    addAndMakeVisible (removeBandButton);
+
+    showOthersToggle.setTooltip ("Show the other bands' curves behind the one being edited");
+    showOthersToggle.setToggleState (processor.uiShowOtherBands.load(), juce::dontSendNotification);
+    curveEditor.setShowOtherBands (processor.uiShowOtherBands.load());
+    showOthersToggle.onClick = [this]
+    {
+        processor.uiShowOtherBands = showOthersToggle.getToggleState();
+        curveEditor.setShowOtherBands (showOthersToggle.getToggleState());
+    };
+    addAndMakeVisible (showOthersToggle);
 
     gridLabel.setText ("Grid", juce::dontSendNotification);
     gridLabel.setJustificationType (juce::Justification::centredRight);
@@ -55,12 +74,11 @@ ShaperEditor::ShaperEditor (ShaperProcessor& p)
     rateAttachment = std::make_unique<ComboAttachment> (params, ParamIDs::rate, rateBox);
     rateTypeAttachment = std::make_unique<ComboAttachment> (params, ParamIDs::rateType, rateTypeBox);
     syncAttachment = std::make_unique<ButtonAttachment> (params, ParamIDs::syncRate, syncToggle);
-    multibandAttachment = std::make_unique<ButtonAttachment> (params, ParamIDs::multiband, multibandToggle);
 
     for (auto* c : { &modeBox, &rateBox, &rateTypeBox })
         addAndMakeVisible (*c);
 
-    for (auto* t : { &syncToggle, &multibandToggle, &bandOnToggle })
+    for (auto* t : { &syncToggle, &bandOnToggle })
         addAndMakeVisible (*t);
 
     const auto neutral = Theme::band (1);
@@ -81,10 +99,10 @@ ShaperEditor::ShaperEditor (ShaperProcessor& p)
     attachKnob (mix, ParamIDs::mix);
     attachKnob (output, ParamIDs::output);
 
-    lastMultiband = params.getRawParameterValue (ParamIDs::multiband)->load() > 0.5f;
+    lastBandCount = processor.getActiveBandCount();
     lastSync = params.getRawParameterValue (ParamIDs::syncRate)->load() > 0.5f;
-    selectBand (lastMultiband ? processor.uiSelectedBand.load() : 0);
     updateEnablement();
+    selectBand (processor.uiSelectedBand.load());
 
     setResizable (true, true);
     setResizeLimits (760, 480, 1800, 1100);
@@ -116,15 +134,21 @@ void ShaperEditor::attachKnob (Knob& knob, const juce::String& paramId)
     knob.attachment = std::make_unique<SliderAttachment> (processor.apvts, paramId, knob.slider);
 }
 
+juce::Colour ShaperEditor::colourFor (int band) const
+{
+    // With 2 bands the top one is "High": use the high colour.
+    return Theme::band (lastBandCount == 2 && band == 1 ? 2 : band);
+}
+
 void ShaperEditor::selectBand (int band)
 {
-    band = juce::jlimit (0, ShaperProcessor::numBands - 1, band);
+    band = juce::jlimit (0, lastBandCount - 1, band);
     processor.uiSelectedBand = band;
     bandButtons[(size_t) band].setToggleState (true, juce::dontSendNotification);
-    curveEditor.setBand (band);
+    curveEditor.setBand (band, lastBandCount, colourFor (band));
 
     attachKnob (depth, ParamIDs::depth (band));
-    depth.slider.setColour (juce::Slider::rotarySliderFillColourId, Theme::band (band));
+    depth.slider.setColour (juce::Slider::rotarySliderFillColourId, colourFor (band));
     bandOnAttachment.reset();
     bandOnAttachment = std::make_unique<ButtonAttachment> (processor.apvts, ParamIDs::bandOn (band), bandOnToggle);
     repaint();
@@ -132,11 +156,25 @@ void ShaperEditor::selectBand (int band)
 
 void ShaperEditor::updateEnablement()
 {
-    bandButtons[0].setButtonText (lastMultiband ? "Low" : "Full");
-    bandButtons[1].setEnabled (lastMultiband);
-    bandButtons[2].setEnabled (lastMultiband);
-    xoverLow.slider.setEnabled (lastMultiband);
-    xoverHigh.slider.setEnabled (lastMultiband);
+    std::array<juce::Colour, ShaperProcessor::numBands> colours;
+
+    for (int b = 0; b < ShaperProcessor::numBands; ++b)
+    {
+        auto& button = bandButtons[(size_t) b];
+        button.setVisible (b < lastBandCount);
+        button.setButtonText (ShaperProcessor::bandName (b, lastBandCount));
+        button.setColour (juce::TextButton::buttonOnColourId, colourFor (b));
+        colours[(size_t) b] = colourFor (b);
+    }
+
+    curveEditor.setBandColours (colours);
+    addBandButton.setEnabled (lastBandCount < ShaperProcessor::numBands);
+    removeBandButton.setVisible (lastBandCount > 1);
+    showOthersToggle.setVisible (lastBandCount > 1);
+
+    xoverLow.label.setText (lastBandCount == 2 ? "Low / High" : "Low / Mid", juce::dontSendNotification);
+    xoverLow.slider.setEnabled (lastBandCount >= 2);
+    xoverHigh.slider.setEnabled (lastBandCount >= 3);
 
     rateBox.setEnabled (lastSync);
     rateTypeBox.setEnabled (lastSync);
@@ -145,18 +183,21 @@ void ShaperEditor::updateEnablement()
 
 void ShaperEditor::timerCallback()
 {
-    const bool multiband = processor.apvts.getRawParameterValue (ParamIDs::multiband)->load() > 0.5f;
+    const int bandCount = processor.getActiveBandCount();
     const bool sync = processor.apvts.getRawParameterValue (ParamIDs::syncRate)->load() > 0.5f;
 
-    if (multiband != lastMultiband || sync != lastSync)
+    if (bandCount != lastBandCount || sync != lastSync)
     {
-        lastMultiband = multiband;
+        const bool bandsChanged = bandCount != lastBandCount;
+        lastBandCount = bandCount;
         lastSync = sync;
-
-        if (! multiband && curveEditor.getBand() != 0)
-            selectBand (0);
-
         updateEnablement();
+
+        if (bandsChanged)
+        {
+            selectBand (juce::jmin (curveEditor.getBand(), bandCount - 1));
+            resized();
+        }
     }
 }
 
@@ -180,11 +221,21 @@ void ShaperEditor::resized()
     header.removeFromLeft (8);
     for (auto& button : bandButtons)
     {
+        if (! button.isVisible())
+            continue;
+
         button.setBounds (header.removeFromLeft (64));
         header.removeFromLeft (4);
     }
+
+    header.removeFromLeft (4);
+    addBandButton.setBounds (header.removeFromLeft (28));
+    header.removeFromLeft (4);
+    removeBandButton.setBounds (header.removeFromLeft (28));
     gridBox.setBounds (header.removeFromRight (72));
     gridLabel.setBounds (header.removeFromRight (44));
+    header.removeFromRight (12);
+    showOthersToggle.setBounds (header.removeFromRight (120));
 
     // Footer.
     auto footer = bounds.removeFromBottom (150).reduced (20, 14);
@@ -199,8 +250,6 @@ void ShaperEditor::resized()
     rateBox.setBounds (rateRow);
     timing.removeFromTop (6);
     rateTypeBox.setBounds (timing.removeFromTop (rowH));
-    timing.removeFromTop (6);
-    multibandToggle.setBounds (timing.removeFromTop (rowH));
 
     footer.removeFromLeft (12);
 

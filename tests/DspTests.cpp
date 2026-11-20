@@ -172,6 +172,63 @@ int main()
         }
     });
 
+    test ("2-band split sums flat and separates", []
+    {
+        const double sr = 48000.0;
+        for (double freq : { 40.0, 200.0, 5000.0 })
+        {
+            Crossover3 x;
+            x.prepare (sr, 1);
+            x.setFrequencies (200.0, 2500.0);
+            double inE = 0.0, sumE = 0.0, lowE = 0.0, highE = 0.0;
+            for (int i = 0; i < 48000; ++i)
+            {
+                const float s = (float) std::sin (2.0 * 3.14159265358979 * freq * i / sr);
+                float l, h;
+                x.process2 (0, s, l, h);
+                if (i > 24000)
+                {
+                    inE += s * s;
+                    sumE += (double) (l + h) * (l + h);
+                    lowE += (double) l * l;
+                    highE += (double) h * h;
+                }
+            }
+            CHECK_NEAR (10.0 * std::log10 (sumE / inE), 0.0, 0.01);
+            if (freq < 100.0) CHECK (lowE > 100.0 * highE);
+            if (freq > 1000.0) CHECK (highE > 100.0 * lowE);
+        }
+    });
+
+    test ("crossover low-frequency delay matches theory (phase report)", []
+    {
+        // An LR4 split sums to a 2nd-order allpass whose DC group delay is 2*sqrt(2) / (2*pi*fc).
+        const double sr = 48000.0;
+        auto measureDelayMs = [sr] (int bands)
+        {
+            Crossover3 x;
+            x.prepare (sr, 1);
+            x.setFrequencies (200.0, 2500.0);
+            const double f = 20.0, w = 2.0 * 3.14159265358979 * f / sr;
+            double re = 0.0, im = 0.0;
+            for (int i = 0; i < 96000; ++i)
+            {
+                const float s = (float) std::sin (w * i);
+                float a, b, c;
+                float y;
+                if (bands == 2) { x.process2 (0, s, a, b); y = a + b; }
+                else            { x.process (0, s, a, b, c); y = a + b + c; }
+                if (i >= 48000) { re += y * std::sin (w * i); im += y * std::cos (w * i); }
+            }
+            const double phase = std::atan2 (im, re); // negative = delayed
+            return -phase / (2.0 * 3.14159265358979 * f) * 1000.0;
+        };
+        const double d2 = measureDelayMs (2), d3 = measureDelayMs (3);
+        std::printf ("       delay of lows vs input: 2 bands %.2f ms, 3 bands %.2f ms\n", d2, d3);
+        CHECK_NEAR (d2, 2.0 * std::sqrt (2.0) / (2.0 * 3.14159265358979 * 200.0) * 1000.0, 0.1);
+        CHECK_NEAR (d3, d2 + 2.0 * std::sqrt (2.0) / (2.0 * 3.14159265358979 * 2500.0) * 1000.0, 0.1);
+    });
+
     test ("crossover separates bands", []
     {
         const double sr = 48000.0;

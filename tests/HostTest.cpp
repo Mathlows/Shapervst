@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 
 #include <cstdio>
+#include <cstring>
 
 static int failures = 0;
 #define CHECK(cond) do { if (! (cond)) { std::printf ("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); ++failures; } } while (0)
@@ -154,16 +155,68 @@ int main (int argc, char** argv)
     }
 
     {
-        std::printf ("[test] multiband with flat curves is transparent, and bands are independent\n");
+        std::printf ("[test] a single band is bit-exact with a flat curve (no filter, no phase shift)\n");
+        ShaperProcessor p;
+        FakePlayHead head;
+        p.setPlayHead (&head);
+        CHECK (p.getActiveBandCount() == 1);
+        p.setCurve (0, shaper::ShapeCurve::fromPreset (shaper::CurvePreset::Flat));
+        p.prepareToPlay (sr, block);
+        juce::AudioBuffer<float> buffer (2, block), original (2, block);
+        juce::MidiBuffer midi;
+        juce::Random rng (7);
+        bool identical = true;
+        for (int n = 0; n < 20; ++n)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < block; ++i)
+                    buffer.setSample (ch, i, rng.nextFloat() * 2.0f - 1.0f);
+            original.makeCopyOf (buffer);
+            p.processBlock (buffer, midi);
+            for (int ch = 0; ch < 2; ++ch)
+                identical = identical && std::memcmp (buffer.getReadPointer (ch), original.getReadPointer (ch), sizeof (float) * block) == 0;
+        }
+        CHECK (identical);
+    }
+
+    {
+        std::printf ("[test] add / remove bands keeps the sound and the curves\n");
+        ShaperProcessor p;
+        auto pump = shaper::ShapeCurve::fromPreset (shaper::CurvePreset::Pump);
+        auto saw = shaper::ShapeCurve::fromPreset (shaper::CurvePreset::SawDown);
+        p.setCurve (0, pump);
+        setParam (p, ParamIDs::depth (0), 0.7f);
+        p.addBand();
+        CHECK (p.getActiveBandCount() == 2);
+        CHECK (p.getCurve (1) == pump); // the new band copies the previous top band
+        CHECK (std::abs (p.apvts.getRawParameterValue (ParamIDs::depth (1))->load() - 0.7f) < 1e-3f);
+        p.setCurve (1, saw);             // ...and can then be drawn independently
+        CHECK (p.getCurve (0) == pump);
+        p.addBand();
+        CHECK (p.getActiveBandCount() == 3);
+        CHECK (p.getCurve (2) == saw);
+        p.addBand();
+        CHECK (p.getActiveBandCount() == 3);
+        p.removeBand();
+        p.removeBand();
+        CHECK (p.getActiveBandCount() == 1);
+        p.removeBand();
+        CHECK (p.getActiveBandCount() == 1);
+    }
+
+    for (int bandCount : { 2, 3 })
+    {
+        std::printf ("[test] %d bands with flat curves are transparent, and bands are independent\n", bandCount);
         ShaperProcessor p;
         FakePlayHead head;
         p.setPlayHead (&head);
         setParam (p, ParamIDs::smooth, 0.0f);
-        setParam (p, ParamIDs::multiband, 1.0f);
+        setParam (p, ParamIDs::bands, (float) (bandCount - 1));
         for (int b = 0; b < 3; ++b)
             p.setCurve (b, shaper::ShapeCurve::fromPreset (shaper::CurvePreset::Flat));
-        p.setCurve (2, shaper::ShapeCurve::fromPreset (shaper::CurvePreset::SawUp));
-        setParam (p, ParamIDs::depth (2), 0.0f); // high band curve present but depth 0
+        const int top = bandCount - 1;
+        p.setCurve (top, shaper::ShapeCurve::fromPreset (shaper::CurvePreset::SawUp));
+        setParam (p, ParamIDs::depth (top), 0.0f); // top band curve present but depth 0
         p.prepareToPlay (sr, block);
 
         auto rmsOfSine = [&] (double freq)
@@ -194,7 +247,7 @@ int main (int argc, char** argv)
             CHECK (std::abs (db) < 0.05);
         }
 
-        setParam (p, ParamIDs::depth (2), 1.0f); // now only the high band is shaped
+        setParam (p, ParamIDs::depth (top), 1.0f); // now only the top band is shaped
         const double lowDb = rmsOfSine (60.0);
         const double highDb = rmsOfSine (8000.0);
         std::printf ("       high band shaped: 60 Hz %+.2f dB, 8 kHz %+.2f dB\n", lowDb, highDb);
@@ -233,11 +286,14 @@ int main (int argc, char** argv)
         ShaperProcessor p;
         FakePlayHead head;
         p.setPlayHead (&head);
-        setParam (p, ParamIDs::multiband, 1.0f);
+        setParam (p, ParamIDs::bands, 2.0f);
         auto c = shaper::ShapeCurve::fromPreset (shaper::CurvePreset::Pump);
         c.addPoint (0.7f, 0.85f);
         c.setTension (2, -0.5f);
-        p.setCurve (0, c);
+        p.setCurve (0, shaper::ShapeCurve::fromPreset (shaper::CurvePreset::Gate));
+        p.setCurve (1, c);
+        p.setCurve (2, shaper::ShapeCurve::fromPreset (shaper::CurvePreset::Sine));
+        p.uiSelectedBand = 1;
         p.prepareToPlay (sr, block);
 
         // Feed some audio so the scope has content.

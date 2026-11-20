@@ -22,9 +22,11 @@ class CurveEditor final : public juce::Component,
 public:
     explicit CurveEditor (ShaperProcessor& processor);
 
-    void setBand (int newBand);
+    /** Selects the band to edit. `bandCount` bands exist; the others are drawn faintly behind it. */
+    void setBand (int newBand, int bandCount, juce::Colour colour);
     int getBand() const noexcept { return band; }
     void setGridDivisions (int divisions);
+    void setShowOtherBands (bool shouldShow) { showOtherBands = shouldShow; repaint(); }
 
     void paint (juce::Graphics&) override;
     void mouseMove (const juce::MouseEvent&) override;
@@ -48,9 +50,19 @@ private:
     void paintAt (juce::Point<float> screen);
     void showContextMenu();
     void commit (const shaper::ShapeCurve& curve);
+    juce::Path curvePath (const shaper::ShapeCurve& curve) const;
+
+public:
+    void setBandColours (const std::array<juce::Colour, ShaperProcessor::numBands>& colours) { otherColours = colours; repaint(); }
+
+private:
 
     ShaperProcessor& processor;
     int band = 0;
+    int activeBandCount = 1;
+    bool showOtherBands = true;
+    juce::Colour bandColour;
+    std::array<juce::Colour, ShaperProcessor::numBands> otherColours;
     int gridDivisions = 8;
 
     Hit hover, drag;

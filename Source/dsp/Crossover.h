@@ -82,6 +82,21 @@ public:
     double getLowFrequency() const noexcept { return lowFreq; }
     double getHighFrequency() const noexcept { return highFreq; }
 
+    /** 2-band split at the low frequency only: low + high = allpass(f1). */
+    inline void process2 (int channel, float x, float& low, float& high) noexcept
+    {
+        auto& s = channels[(size_t) channel];
+        float lp, bp, hp;
+
+        s.lo1.tick (lowCoeffs, x, lp, bp, hp);
+        const float lpA = lp, hpA = hp;
+        s.lo2.tick (lowCoeffs, lpA, lp, bp, hp);
+        low = lp;
+        s.lo3.tick (lowCoeffs, hpA, lp, bp, hp);
+        high = hp;
+    }
+
+    /** 3-band split. */
     inline void process (int channel, float x, float& low, float& mid, float& high) noexcept
     {
         auto& s = channels[(size_t) channel];

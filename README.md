@@ -10,11 +10,11 @@ Ableton Live (toutes éditions), FL Studio, Logic, Bitwig, Reaper, Cubase…
 | | |
 |---|---|
 | **Éditeur de courbe façon LFO Serum** | points, tension par segment, sauts verticaux (steps), grille, peinture de steps |
-| **Multibande** | 3 bandes Linkwitz-Riley 24 dB/oct, somme à plat (vérifiée par les tests), une courbe + profondeur par bande |
+| **Bandes** | 1 bande par défaut (aucun filtre), boutons **+** / **−** pour passer à 2 ou 3 bandes (Linkwitz-Riley 24 dB/oct, somme à plat). Chaque bande a sa propre courbe et sa propre profondeur ; une nouvelle bande copie la bande du haut pour ne pas changer le son. Les courbes des autres bandes s'affichent en fond (désactivable : *Other bands*) |
 | **Modes de déclenchement** | *Host sync* (calé sur la position du morceau), *MIDI retrigger* (une note relance la courbe), *MIDI envelope* (une note joue la courbe une fois) — MIDI à l'échantillon près |
 | **Vitesse** | divisions 8 mesures → 1/64, pointé / triolet, ou libre en Hz |
 | **Smooth** | lissage 0–50 ms du gain : supprime les clics sur les sauts brusques |
-| **Divers** | phase, mix (dry aligné en phase en mode multibande), gain de sortie, affichage du signal d'entrée derrière la courbe, tête de lecture |
+| **Divers** | phase, mix (dry aligné en phase en multibande), gain de sortie, affichage du signal d'entrée derrière la courbe, tête de lecture |
 
 ### Contrôles de l'éditeur de courbe
 
@@ -31,6 +31,19 @@ Ableton Live (toutes éditions), FL Studio, Logic, Bitwig, Reaper, Cubase…
 | Formes prédéfinies, inverser, retourner, copier/coller, copier vers toutes les bandes | clic droit |
 
 Les premier et dernier points sont fixés en X (comme dans Serum).
+
+## Multibande et phase
+
+Avec **1 bande**, le signal n'est pas filtré : aucun déphasage (vérifié bit à bit par les tests).
+
+Avec 2 ou 3 bandes, le crossover Linkwitz-Riley garde une réponse en amplitude parfaitement plate, mais il fait
+tourner la phase : les graves sortent légèrement retardées par rapport aux aigus (mesuré : **2,26 ms** avec 2 bandes,
+**2,44 ms** avec 3 bandes, coupures à 200 Hz / 2,5 kHz ; plus la coupure est basse, plus le retard est grand).
+
+- Seul sur une piste : quasi inaudible (au pire une attaque de kick un peu adoucie).
+- Le knob **Mix** n'est pas concerné : son signal sec passe par le même déphasage.
+- À éviter : mélanger le signal traité avec une copie non traitée du même son (envoi parallèle, piste dupliquée), ce
+  qui crée du filtrage en peigne. Option future : un crossover à phase linéaire (sans déphasage, mais avec de la latence).
 
 ## Déclenchement MIDI dans Ableton Live
 
@@ -87,6 +100,7 @@ JUCE 8 est sous double licence : **AGPLv3** (code source ouvert obligatoire) ou 
 
 ## Pistes pour la suite
 
+- Crossover à phase linéaire en option
 - Annuler / rétablir dans l'éditeur, sélection multiple de points
 - Déclenchement par transitoires audio (sidechain audio)
 - Courbes dans un mode « dB » plutôt que linéaire, presets utilisateur sur disque

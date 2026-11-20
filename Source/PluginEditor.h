@@ -33,6 +33,7 @@ private:
     void attachKnob (Knob&, const juce::String& paramId);
     void selectBand (int band);
     void updateEnablement();
+    juce::Colour colourFor (int band) const;
 
     ShaperProcessor& processor;
     Theme::LookAndFeel lookAndFeel;
@@ -44,13 +45,14 @@ private:
     CurveEditor curveEditor;
 
     juce::ComboBox modeBox, rateBox, rateTypeBox;
-    juce::ToggleButton syncToggle { "BPM" }, multibandToggle { "Multiband" }, bandOnToggle { "Band on" };
+    juce::ToggleButton syncToggle { "BPM" }, bandOnToggle { "Band on" }, showOthersToggle { "Other bands" };
+    juce::TextButton addBandButton { "+" }, removeBandButton { "-" };
     Knob rateHz, phase, smooth, xoverLow, xoverHigh, depth, mix, output;
 
     std::unique_ptr<ComboAttachment> modeAttachment, rateAttachment, rateTypeAttachment;
-    std::unique_ptr<ButtonAttachment> syncAttachment, multibandAttachment, bandOnAttachment;
+    std::unique_ptr<ButtonAttachment> syncAttachment, bandOnAttachment;
 
-    bool lastMultiband = false;
+    int lastBandCount = 1;
     bool lastSync = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ShaperEditor)
